@@ -7,13 +7,6 @@ from datetime import datetime
 from plyer import notification
 import os
 import sys
-import platform
-
-# Get correct path to bundled resources (e.g., logo.ico)
-def resource_path(relative_path):
-    if hasattr(sys, '_MEIPASS'):
-        return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.abspath(relative_path)
 
 store_list = {
     "1234": "192.168.1.10",
@@ -22,21 +15,19 @@ store_list = {
 status_dict = {}
 last_change_dict = {}
 lock = threading.Lock()
+sort_state = {"column": None, "order": None}  # Tracks current sort state
+
 
 def is_online(ip):
     try:
         creationflags = 0
-        if platform.system() == "Windows":
-            # Prevent console window from opening
+        if os.name == "nt":
             creationflags = subprocess.CREATE_NO_WINDOW
-
-        result = subprocess.run(
-            ["ping", "-n", "1", ip],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=creationflags,
-            text=True
-        )
+        result = subprocess.run(["ping", "-n", "1", ip],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE,
+                                creationflags=creationflags,
+                                text=True)
         return "TTL=" in result.stdout
     except Exception:
         return False
@@ -45,10 +36,13 @@ class StoreMonitorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Store Connection Monitor")
-        self.root.iconbitmap(resource_path("logo.ico"))
         self.enable_notifications = tk.BooleanVar(value=True)
 
-        # DARK THEME
+        # Window grid config
+        self.root.rowconfigure(0, weight=1)
+        self.root.columnconfigure(0, weight=1)
+
+        # Dark theme setup
         self.root.configure(bg="#1e1e1e")
         style = ttk.Style(self.root)
         style.theme_use("default")
@@ -62,43 +56,74 @@ class StoreMonitorApp:
                         background="#1e1e1e",
                         foreground="#ffffff",
                         font=("Segoe UI", 10, "bold"))
-        style.map("Treeview", 
+        style.map("Treeview",
                   background=[('selected', '#444')],
-                  foreground=[])  # Prevent override of tag color
+                  foreground=[])
 
+        # Treeview
         self.tree = ttk.Treeview(root, columns=("store", "ip", "status", "last_change"), show="headings")
         self.tree.heading("store", text="Store #")
         self.tree.heading("ip", text="IP Address")
         self.tree.heading("status", text="Status")
         self.tree.heading("last_change", text="Last Change")
-        self.tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.tree.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 5))
 
+        # Button frame at bottom
         button_frame = tk.Frame(root, bg="#1e1e1e")
-        button_frame.pack(pady=5)
+        button_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+
         ttk.Button(button_frame, text="Add Store", command=self.add_store).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Remove Store", command=self.remove_store).pack(side=tk.LEFT, padx=5)
         tk.Checkbutton(button_frame, text="Enable Notifications", variable=self.enable_notifications,
-                       fg="white", bg="#1e1e1e", selectcolor="#2b2b2b", activebackground="#1e1e1e",
-                       activeforeground="white").pack(side=tk.LEFT, padx=5)
+                       fg="white", bg="#1e1e1e", selectcolor="#2b2b2b",
+                       activebackground="#1e1e1e", activeforeground="white").pack(side=tk.LEFT, padx=5)
 
+        # Tag styles
         self.tree.tag_configure("green", foreground="#7CFC00")
         self.tree.tag_configure("red", foreground="#FF6A6A")
 
+        # Start monitor thread
         self.update_thread = threading.Thread(target=self.monitor_loop, daemon=True)
         self.update_thread.start()
 
         self.refresh_ui()
+        # Enable sortable column headers
+        for col in ("store", "ip", "status", "last_change"):
+            self.tree.heading(col, text=self.tree.heading(col)["text"], command=lambda c=col: self.sort_by_column(c))
+
 
     def refresh_ui(self):
         with lock:
-            sorted_stores = sorted(store_list.items(), key=lambda x: not status_dict.get(x[0], False))
-            self.tree.delete(*self.tree.get_children())
-            for store, ip in sorted_stores:
-                online = status_dict.get(store)
+            store_data = []
+            for store, ip in store_list.items():
+                online = status_dict.get(store, False)
                 status = "ONLINE" if online else "OFFLINE"
-                color = "green" if online else "red"
                 last_change = last_change_dict.get(store, "")
+                store_data.append((store, ip, status, last_change, online))
+
+            # Apply sorting
+            col, order = sort_state["column"], sort_state["order"]
+            if col:
+                idx = {"store": 0, "ip": 1, "status": 2, "last_change": 3}[col]
+                reverse = (order == "desc")
+                if col == "status":
+                    store_data.sort(key=lambda x: not x[4], reverse=reverse)  # sort by online boolean
+                else:
+                    store_data.sort(key=lambda x: x[idx], reverse=reverse)
+
+            # Update header arrows
+            for column in ("store", "ip", "status", "last_change"):
+                arrow = ""
+                if column == col:
+                    arrow = " ▲" if order == "asc" else " ▼"
+                titles = {"store": "Store #", "ip": "IP Address", "status": "Status", "last_change": "Last Changed"}
+                self.tree.heading(column, text=titles.get(column, column.title()) + arrow)
+
+            self.tree.delete(*self.tree.get_children())
+            for store, ip, status, last_change, online in store_data:
+                color = "green" if online else "red"
                 self.tree.insert("", "end", values=(store, ip, status, last_change), tags=(color,))
+
 
     def monitor_loop(self):
         while True:
@@ -150,6 +175,20 @@ class StoreMonitorApp:
                 status_dict.pop(store_num, None)
                 last_change_dict.pop(store_num, None)
         self.refresh_ui()
+
+    def sort_by_column(self, col):
+        # Toggle sort order
+        order = "asc"
+        if sort_state["column"] == col and sort_state["order"] == "asc":
+            order = "desc"
+        elif sort_state["column"] == col and sort_state["order"] == "desc":
+            col, order = None, None  # Reset sort
+
+        sort_state["column"] = col
+        sort_state["order"] = order
+
+        self.refresh_ui()
+
 
 if __name__ == "__main__":
     root = tk.Tk()

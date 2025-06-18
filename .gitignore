@@ -1,0 +1,15 @@
+# Ignore Python virtual environments
+venv/
+
+# Ignore PyInstaller build files
+build/
+dist/
+__pycache__/
+*.spec
+
+# Ignore editor/project files
+*.log
+*.pyc
+*.pyo
+*.db
+*.DS_Store
