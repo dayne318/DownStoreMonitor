@@ -28,3 +28,6 @@ ICON_FILE = "logo.ico"  # Expected at app/icons/logo.ico (added to the exe with 
 
 # Persistence: filename for saved store list (path resolved in storage module)
 STORES_FILENAME = "stores.json"
+
+# Store IP list CSV (path resolved in store_ip_list module; same base as stores path)
+STORE_IP_LIST_FILENAME = "Store_IP_List.csv"

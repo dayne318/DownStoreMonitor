@@ -20,6 +20,7 @@ from typing import Callable, Optional
 
 from .repository import Repo
 from .utils import ping_with_stats
+from .store_ip_list import get_ip_for_store
 from .config import PING_INTERVAL_SEC
 from .config import PING_COUNT
 
@@ -74,12 +75,18 @@ class StoreMonitor:
             stores, status, _ = self.repo.snapshot()
             for number, store in stores.items():
                 try:
-                    online, avg_latency, success_count = ping_with_stats(store.ip, PING_COUNT)
+                    effective_ip = (store.ip or "").strip() or get_ip_for_store(store.number)
+                    if not effective_ip:
+                        online, avg_latency, success_count = False, None, 0
+                        display_ip = "—"
+                    else:
+                        online, avg_latency, success_count = ping_with_stats(effective_ip, PING_COUNT)
+                        display_ip = effective_ip
 
                     # Emit per-store aggregate ping result (for the Logs panel)
                     if self.on_ping is not None:
                         try:
-                            self.on_ping(number, store.ip, online, avg_latency, success_count)
+                            self.on_ping(number, display_ip, online, avg_latency, success_count)
                         except Exception:
                             pass
 

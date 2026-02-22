@@ -15,6 +15,7 @@ from app.ui import AppUI
 from app.repository import Repo
 from app.monitor import StoreMonitor
 from app.storage import get_stores_path, load_stores, save_stores
+from app.store_ip_list import load_store_ip_list
 
 
 def make_notifier(ui: AppUI):
@@ -46,6 +47,8 @@ if __name__ == "__main__":
     stores_path = get_stores_path()
     for store in load_stores(stores_path):
         repo.upsert(store)
+
+    load_store_ip_list()
 
     def save_callback():
         save_stores(list(repo.snapshot()[0].values()), stores_path)

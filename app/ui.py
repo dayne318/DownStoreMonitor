@@ -22,6 +22,7 @@ from .utils import (
     make_helpdesk_url,
     ticket_icon_hit,
 )
+from .store_ip_list import get_ip_for_store
 
 
 class AppUI:
@@ -265,7 +266,8 @@ class AppUI:
             st = "ONLINE" if online else "OFFLINE"
             lc = last_change.get(number, "")
             ticket_normalized = format_ticket(store.helpdesk_ticket)
-            entries.append((number, store.ip, st, lc, store.isp, ticket_normalized, online))
+            effective_ip = (store.ip or "").strip() or get_ip_for_store(store.number) or "—"
+            entries.append((number, effective_ip, st, lc, store.isp, ticket_normalized, online))
 
         # Sorting
         col, order = self.sort_state["column"], self.sort_state["order"]
@@ -393,9 +395,10 @@ class AppUI:
         e_store = tk.Entry(win)
         e_store.grid(row=0, column=1, padx=5, pady=5)
 
-        tk.Label(win, text="IP Address", fg="white", bg="#1e1e1e").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        tk.Label(win, text="IP Address (optional)", fg="white", bg="#1e1e1e").grid(row=1, column=0, sticky="e", padx=5, pady=5)
         e_ip = tk.Entry(win)
         e_ip.grid(row=1, column=1, padx=5, pady=5)
+        tk.Label(win, text="Leave blank to use IP from list.", fg="gray", bg="#1e1e1e", font=("Segoe UI", 8)).grid(row=1, column=2, sticky="w", padx=(0, 5))
 
         tk.Label(win, text="ISP", fg="white", bg="#1e1e1e").grid(row=2, column=0, sticky="e", padx=5, pady=5)
         v_isp = tk.StringVar()
@@ -411,8 +414,12 @@ class AppUI:
             ip = (e_ip.get() or "").strip()
             isp = v_isp.get()
             ticket = format_ticket((e_ticket.get() or "").strip())
-            if not number or not ip:
+            if not number:
                 return
+            if not ip:
+                if get_ip_for_store(number) is None:
+                    messagebox.showerror("Add Store", "Error: Store does not have an ip saved please fill out the IP field")
+                    return
             self.repo.upsert(Store(number=number, ip=ip, isp=isp, helpdesk_ticket=ticket))
             win.destroy()
             self.refresh_ui()
@@ -473,8 +480,8 @@ class AppUI:
         e_store.config(state="disabled")
         e_store.grid(row=0, column=1, padx=5, pady=5)
 
-        # IP Address
-        tk.Label(win, text="IP Address", fg="white", bg="#1e1e1e").grid(row=1, column=0, sticky="e", padx=5, pady=5)
+        # IP Address (optional)
+        tk.Label(win, text="IP Address (optional)", fg="white", bg="#1e1e1e").grid(row=1, column=0, sticky="e", padx=5, pady=5)
         e_ip = tk.Entry(win)
         e_ip.insert(0, store.ip)
         e_ip.grid(row=1, column=1, padx=5, pady=5)
@@ -495,6 +502,9 @@ class AppUI:
             ip = (e_ip.get() or "").strip()
             isp = v_isp.get()
             ticket = format_ticket((e_ticket.get() or "").strip())
+            if not ip and get_ip_for_store(number) is None:
+                messagebox.showerror("Edit Store", "Error: Store does not have an ip saved please fill out the IP field")
+                return
             self.repo.upsert(Store(number=number, ip=ip, isp=isp, helpdesk_ticket=ticket))
             win.destroy()
             self.refresh_ui()
