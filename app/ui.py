@@ -15,7 +15,7 @@ from typing import Callable
 
 from .repository import Repo
 from .models import Store
-from .config import ISP_OPTIONS, HELPDESK_URL_PREFIX, ICON_FILE, LOG_MAX_LINES
+from .config import ISP_OPTIONS, HELPDESK_URL_PREFIX, ICON_FILE, LOG_MAX_LINES, PING_COUNT
 from .utils import (
     get_icon_path,
     format_ticket,
@@ -203,7 +203,7 @@ class AppUI:
         status = "ONLINE" if online else "OFFLINE"
         latency = f"{latency_ms} ms" if latency_ms is not None else "timeout"
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        line = f"[{stamp}] {str(number).zfill(4)} ping {ip} -> {status} ({success_count}/4 ok, {latency})\n"
+        line = f"[{stamp}] {str(number).zfill(4)} ping {ip} -> {status} ({success_count}/{PING_COUNT} ok, {latency})\n"
         self.root.after(0, lambda: self._append_log(line))
 
     # ---------- UI callbacks & utilities ----------

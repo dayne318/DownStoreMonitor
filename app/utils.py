@@ -13,7 +13,7 @@ import sys
 import subprocess
 import re
 
-from .config import PING_TIMEOUT_MS
+from .config import PING_TIMEOUT_MS, PING_QUORUM
 
 
 def get_icon_path(filename: str) -> str:
@@ -53,6 +53,41 @@ def is_online(ip: str) -> bool:
         return "TTL=" in (result.stdout or "")
     except (subprocess.TimeoutExpired, OSError, ValueError, Exception):
         return False
+
+
+def ping_with_stats(ip: str, count: int) -> tuple[bool, int | None, int]:
+    """
+    Purpose: Run ping -n count and parse Windows output for online, average RTT, and success count.
+    Inputs: ip (str), count (int) number of echo requests.
+    Outputs: (online, avg_latency_ms, success_count). online = success_count >= PING_QUORUM;
+             avg_latency_ms from "Average = Xms" when success_count > 0, else None.
+    Side Effects: Spawns a ping subprocess.
+    Thread-safety: Safe; no shared state.
+    """
+    try:
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+        timeout_sec = (PING_TIMEOUT_MS / 1000.0) * count
+        result = subprocess.run(
+            ["ping", "-n", str(count), ip],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=creationflags,
+            text=True,
+            timeout=timeout_sec,
+        )
+        stdout = result.stdout or ""
+        # Received = N from "Packets: Sent = 4, Received = 4, Lost = 0"
+        received_m = re.search(r"Received\s*=\s*(\d+)", stdout)
+        success_count = int(received_m.group(1)) if received_m else 0
+        online = success_count >= PING_QUORUM
+        avg_latency_ms: int | None = None
+        if success_count > 0:
+            avg_m = re.search(r"Average\s*=\s*(\d+)ms", stdout)
+            if avg_m:
+                avg_latency_ms = int(avg_m.group(1))
+        return (online, avg_latency_ms, success_count)
+    except (subprocess.TimeoutExpired, OSError, ValueError, Exception):
+        return (False, None, 0)
 
 
 def format_ticket(raw: str) -> str:

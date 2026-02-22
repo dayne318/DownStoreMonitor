@@ -19,9 +19,9 @@ import time
 from typing import Callable, Optional
 
 from .repository import Repo
-from .utils import is_online
+from .utils import ping_with_stats
 from .config import PING_INTERVAL_SEC
-from .config import PING_COUNT, PING_QUORUM  # NEW: multi-ping behavior
+from .config import PING_COUNT
 
 
 class StoreMonitor:
@@ -74,20 +74,7 @@ class StoreMonitor:
             stores, status, _ = self.repo.snapshot()
             for number, store in stores.items():
                 try:
-                    # Perform multiple pings and track successes + timings
-                    success_count = 0
-                    total_ms = 0
-                    for _ in range(PING_COUNT):
-                        t0 = time.perf_counter()
-                        ok = is_online(store.ip)
-                        elapsed_ms = int((time.perf_counter() - t0) * 1000)
-                        if ok:
-                            success_count += 1
-                            total_ms += elapsed_ms
-
-                    # Decide final state by quorum; compute average latency if any success
-                    online = success_count >= PING_QUORUM
-                    avg_latency = int(total_ms / success_count) if success_count > 0 else None
+                    online, avg_latency, success_count = ping_with_stats(store.ip, PING_COUNT)
 
                     # Emit per-store aggregate ping result (for the Logs panel)
                     if self.on_ping is not None:
