@@ -11,6 +11,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import webbrowser
 from datetime import datetime
+from typing import Callable
 
 from .repository import Repo
 from .models import Store
@@ -33,12 +34,13 @@ class AppUI:
         show_logs (tk.BooleanVar): toggles visibility of the logs panel (ping events)
     - Public methods:
         schedule_refresh(): thread-safe way to refresh Treeview from monitor thread
-        on_ping(): thread-safe adapter to append one ping line into Logs
+        on_ping(): thread-safe adapter to append one (aggregate) ping line into Logs
     """
 
-    def __init__(self, root: tk.Tk, repo: Repo):
+    def __init__(self, root: tk.Tk, repo: Repo, save_callback: Callable[[], None]):
         self.root = root
         self.repo = repo
+        self.save_callback = save_callback
 
         # UI state variables
         self.enable_notifications = tk.BooleanVar(value=True)
@@ -52,6 +54,36 @@ class AppUI:
         self.root.rowconfigure(0, weight=1)
         self.root.columnconfigure(0, weight=1)
         self.root.configure(bg="#1e1e1e")
+
+        # Paned window: top = content (tree, buttons), bottom = notes OR logs (when shown)
+        self.paned = ttk.PanedWindow(self.root, orient=tk.VERTICAL)
+        self.paned.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+
+        content_frame = tk.Frame(self.paned, bg="#1e1e1e")
+        content_frame.rowconfigure(0, weight=1)
+        content_frame.columnconfigure(0, weight=1)
+        self.paned.add(content_frame, weight=1)
+
+        # Bottom pane: always in paned window; resize with pane() to show/hide (weight=0/minsize=0 when hidden)
+        self.bottom_frame = tk.Frame(self.paned, bg="#1e1e1e")
+        self.notes_box = tk.Text(self.bottom_frame, height=5, bg="#2b2b2b", fg="white")
+        self.notes_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+        self.notes_box.pack_forget()  # hidden by default
+        self.logs_box = tk.Text(self.bottom_frame, height=6, bg="#1b1b1b", fg="#dddddd", wrap="none")
+        self.logs_box.configure(state="disabled")
+        self.logs_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 6))
+        self.logs_box.pack_forget()  # hidden by default
+        self.paned.add(self.bottom_frame, weight=0)  # start collapsed; expand when Notes/Logs checked
+
+        def _keep_sash_collapsed(_event=None):
+            """When both Notes and Logs are unchecked, keep sash at bottom so window can resize down."""
+            if not self.show_notes.get() and not self.show_logs.get():
+                self.paned.update_idletasks()
+                total = self.paned.winfo_height()
+                if total > 0:
+                    self.paned.sashpos(0, total)
+
+        self.paned.bind("<Configure>", _keep_sash_collapsed)
 
         # Style
         style = ttk.Style(self.root)
@@ -74,11 +106,15 @@ class AppUI:
 
         # Treeview
         self.columns = ("store", "ip", "status", "last_change", "isp", "helpdesk_ticket")
-        self.tree = ttk.Treeview(self.root, columns=self.columns, show="headings")
+        self.tree = ttk.Treeview(content_frame, columns=self.columns, show="headings")
         self.tree.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 5))
 
         self.tree.tag_configure("green", foreground="#7CFC00")
         self.tree.tag_configure("red", foreground="#FF6A6A")
+        self.tree.tag_configure("orange", foreground="#FFA500")  # degraded (partial success)
+
+        # Cache of last probe success count: {store_number -> int(0..4)}
+        self._last_probe_success: dict[str, int] = {}
 
         headers = {
             "store": "Store #",
@@ -95,24 +131,14 @@ class AppUI:
         self.tree.bind("<Button-1>", self.on_single_click)
         self.tree.bind("<Double-1>", self.on_double_click)  # Currently unused (notes moved out)
 
-        # Notes area (global notes text box)
-        self.notes_box = tk.Text(self.root, height=5, bg="#2b2b2b", fg="white")
-        self.notes_box.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 5))
-        self.notes_box.grid_remove()  # hidden by default
-
-        # Logs panel (read-only) sits below notes, above buttons
-        self.logs_box = tk.Text(self.root, height=6, bg="#1b1b1b", fg="#dddddd", wrap="none")
-        self.logs_box.configure(state="disabled")
-        self.logs_box.grid(row=3, column=0, sticky="nsew", padx=10, pady=(0, 6))
-        self.logs_box.grid_remove()  # hidden by default
-
-        # Buttons & toggles
-        button_frame = tk.Frame(self.root, bg="#1e1e1e")
-        button_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 10))
+        # Buttons & toggles (content_frame: tree row 0, buttons row 4 only)
+        button_frame = tk.Frame(content_frame, bg="#1e1e1e")
+        button_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=(0, 10))
 
         ttk.Button(button_frame, text="Add Store", command=self.add_store).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Remove Store", command=self.remove_store).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Edit Store", command=self.edit_store).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Delete All", command=self.delete_all).pack(side=tk.LEFT, padx=5)
 
         tk.Checkbutton(
             button_frame,
@@ -135,7 +161,7 @@ class AppUI:
             command=self.toggle_notes,
         ).pack(side=tk.LEFT, padx=5)
 
-        # NEW: Show Logs toggle
+        # Show Logs toggle
         tk.Checkbutton(
             button_frame,
             text="Show Logs",
@@ -145,8 +171,6 @@ class AppUI:
             selectcolor="#2b2b2b",
             command=self.toggle_logs,
         ).pack(side=tk.LEFT, padx=5)
-
-        button_frame.grid_configure(row=4)
 
         # Initial paint
         self.refresh_ui()
@@ -162,34 +186,69 @@ class AppUI:
         self.root.after(0, self.refresh_ui)
 
     # ---------- per-ping hook (called from monitor thread) --------
-    def on_ping(self, number: str, ip: str, online: bool, latency_ms: int | None) -> None:
+    def on_ping(self, number: str, ip: str, online: bool, latency_ms: int | None, success_count: int) -> None:
         """
-        Purpose: Append a single ping result to the Logs panel.
-        Inputs: store number, ip, online flag, measured latency in ms (approx, may be None).
+        Purpose: Append an aggregate ping result to the Logs panel and remember success count.
+        Inputs:
+            number: store number
+            ip: probed IP
+            online: final state after quorum
+            latency_ms: average of successful probes (None if no success)
+            success_count: number of successful probes (e.g., 0..4)
         Thread-safety: Reschedules append on main thread.
         """
+        # remember last success count for coloring in refresh_ui
+        self._last_probe_success[number] = success_count
+
         status = "ONLINE" if online else "OFFLINE"
         latency = f"{latency_ms} ms" if latency_ms is not None else "timeout"
-        # Example line: [2025-08-19 12:34:56] 0420 ping 10.0.0.5 -> ONLINE (23 ms)
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        line = f"[{stamp}] {str(number).zfill(4)} ping {ip} -> {status} ({latency})\n"
+        line = f"[{stamp}] {str(number).zfill(4)} ping {ip} -> {status} ({success_count}/4 ok, {latency})\n"
         self.root.after(0, lambda: self._append_log(line))
 
     # ---------- UI callbacks & utilities ----------
 
     def toggle_notes(self) -> None:
-        """Show/hide the global notes Text widget."""
+        """Show notes in bottom pane; mutually exclusive with logs. Resize pane to show/hide."""
         if self.show_notes.get():
-            self.notes_box.grid()
+            self.show_logs.set(False)
+            self.paned.pane(self.bottom_frame, weight=1)
+            self.logs_box.pack_forget()
+            self.notes_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+            self.paned.update_idletasks()
+            total = self.paned.winfo_height()
+            pos = int(total * 0.8) if total > 0 else None
+            if total > 0:
+                self.paned.sashpos(0, pos)
         else:
-            self.notes_box.grid_remove()
+            self.notes_box.pack_forget()
+            if not self.show_logs.get():
+                self.paned.pane(self.bottom_frame, weight=0)
+                self.paned.update_idletasks()
+                total = self.paned.winfo_height()
+                if total > 0:
+                    self.paned.sashpos(0, total)
 
-    # show/hide Logs Text widget
     def toggle_logs(self) -> None:
+        """Show logs in bottom pane; mutually exclusive with notes. Resize pane to show/hide."""
         if self.show_logs.get():
-            self.logs_box.grid()
+            self.show_notes.set(False)
+            self.paned.pane(self.bottom_frame, weight=1)
+            self.notes_box.pack_forget()
+            self.logs_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 6))
+            self.paned.update_idletasks()
+            total = self.paned.winfo_height()
+            pos = int(total * 0.8) if total > 0 else None
+            if total > 0:
+                self.paned.sashpos(0, pos)
         else:
-            self.logs_box.grid_remove()
+            self.logs_box.pack_forget()
+            if not self.show_notes.get():
+                self.paned.pane(self.bottom_frame, weight=0)
+                self.paned.update_idletasks()
+                total = self.paned.winfo_height()
+                if total > 0:
+                    self.paned.sashpos(0, total)
 
     def refresh_ui(self) -> None:
         """
@@ -223,7 +282,21 @@ class AppUI:
         # Repaint
         self.tree.delete(*self.tree.get_children())
         for (number, ip, st, lc, isp, ticket, online) in entries:
-            color = "green" if online else "red"
+            # Determine color:
+            #   red = offline (0/4)
+            #   orange = degraded (1-3/4)
+            #   green = healthy (4/4)
+            if not online:
+                color = "red"
+            else:
+                sc = self._last_probe_success.get(number, 4)
+                if sc == 4:
+                    color = "green"
+                elif 1 <= sc < 4:
+                    color = "orange"
+                else:
+                    color = "green"
+
             # render icon at the front if ticket present
             ticket_display = f"↗ {ticket}" if ticket else ""
             self.tree.insert("", "end", values=(number, ip, st, lc, isp, ticket_display), tags=(color,))
@@ -283,7 +356,8 @@ class AppUI:
         self.sort_state["order"] = order
         self.refresh_ui()
 
-    # NEW: internal helper to append and trim logs
+    # ---------- internal helper for Logs ----------
+
     def _append_log(self, text: str) -> None:
         """
         Purpose: Append one line to the Logs panel and trim to LOG_MAX_LINES.
@@ -342,6 +416,7 @@ class AppUI:
             self.repo.upsert(Store(number=number, ip=ip, isp=isp, helpdesk_ticket=ticket))
             win.destroy()
             self.refresh_ui()
+            self.save_callback()
 
         ttk.Button(win, text="Save", command=save).grid(row=4, column=0, columnspan=2, pady=10)
 
@@ -357,6 +432,18 @@ class AppUI:
         number = str(self.tree.item(selected[0])["values"][0]).zfill(4)
         self.repo.remove(number)
         self.refresh_ui()
+        self.save_callback()
+
+    def delete_all(self) -> None:
+        """
+        Purpose: Remove all stores after user confirmation.
+        Side effects: Mutates Repo; calls save_callback so persisted file is updated.
+        """
+        if not messagebox.askyesno("Delete All", "Remove all stores from the list? This cannot be undone."):
+            return
+        self.repo.clear_all()
+        self.refresh_ui()
+        self.save_callback()
 
     def edit_store(self) -> None:
         """
@@ -411,5 +498,6 @@ class AppUI:
             self.repo.upsert(Store(number=number, ip=ip, isp=isp, helpdesk_ticket=ticket))
             win.destroy()
             self.refresh_ui()
+            self.save_callback()
 
         ttk.Button(win, text="Save", command=save).grid(row=4, column=0, columnspan=2, pady=10)
