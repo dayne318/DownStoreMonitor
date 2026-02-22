@@ -19,4 +19,12 @@ HELPDESK_URL_PREFIX = "https://lidshelp.atlassian.net/jira/servicedesk/projects/
 
 PING_INTERVAL_SEC = 30
 
+## Multi-ping behavior (new)
+PING_COUNT = 4            # send 4 echo requests per cycle
+PING_TIMEOUT_MS = 1500    # 1-second timeout per ping
+PING_QUORUM = 1           # consider ONLINE if >=1 success (0/4 = offline)
+
 ICON_FILE = "logo.ico"  # Expected at app/icons/logo.ico (added to the exe with --add-data)
+
+# Persistence: filename for saved store list (path resolved in storage module)
+STORES_FILENAME = "stores.json"

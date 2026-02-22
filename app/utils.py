@@ -13,6 +13,8 @@ import sys
 import subprocess
 import re
 
+from .config import PING_TIMEOUT_MS
+
 
 def get_icon_path(filename: str) -> str:
     """
@@ -34,21 +36,22 @@ def is_online(ip: str) -> bool:
     Purpose: Ping the given IP once to determine online/offline.
     Inputs: ip (str)
     Outputs: True if reachable (Windows ping shows 'TTL='), else False.
-    Side Effects: Spawns a 'ping' subprocess.
+    Side Effects: Spawns a 'ping' subprocess with timeout to avoid blocking.
     Thread-safety: Safe; no shared state.
     """
     try:
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        # Windows ping (-n 1); if needed, handle other OS with different flags
+        timeout_sec = PING_TIMEOUT_MS / 1000.0
         result = subprocess.run(
             ["ping", "-n", "1", ip],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             creationflags=creationflags,
             text=True,
+            timeout=timeout_sec,
         )
-        return "TTL=" in result.stdout
-    except Exception:
+        return "TTL=" in (result.stdout or "")
+    except (subprocess.TimeoutExpired, OSError, ValueError, Exception):
         return False
 
 

@@ -67,6 +67,18 @@ class Repo:
             self._status.pop(number, None)
             self._last_change.pop(number, None)
 
+    def clear_all(self) -> None:
+        """
+        Purpose: Remove all stores and all status metadata.
+        Outputs: None
+        Side effects: Clears _stores, _status, _last_change.
+        Thread-safety: Protected by _lock.
+        """
+        with self._lock:
+            self._stores.clear()
+            self._status.clear()
+            self._last_change.clear()
+
     # -------- Status handling --------
 
     def set_status(self, number: str, online: bool) -> None:
