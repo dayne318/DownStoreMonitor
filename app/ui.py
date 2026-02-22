@@ -113,6 +113,7 @@ class AppUI:
         self.tree.tag_configure("green", foreground="#7CFC00")
         self.tree.tag_configure("red", foreground="#FF6A6A")
         self.tree.tag_configure("orange", foreground="#FFA500")  # degraded (partial success)
+        self.tree.tag_configure("gray", foreground="#888888")  # pinging (unknown)
 
         # Cache of last probe success count: {store_number -> int(0..4)}
         self._last_probe_success: dict[str, int] = {}
@@ -259,15 +260,21 @@ class AppUI:
         """
         stores, status, last_change = self.repo.snapshot()
 
-        # Build display entries: (store, ip, status, last_change, isp, ticket, online)
+        # Build display entries: (store, ip, status_text, last_change, isp, ticket, status_kind)
+        # status_kind: True=online, False=offline, None=pinging (not yet probed)
         entries = []
         for number, store in stores.items():
-            online = status.get(number, False)
-            st = "ONLINE" if online else "OFFLINE"
-            lc = last_change.get(number, "")
+            status_kind = status.get(number)  # None when key missing = pinging
+            if status_kind is True:
+                st = "ONLINE"
+            elif status_kind is False:
+                st = "OFFLINE"
+            else:
+                st = "Pinging"
+            lc = last_change.get(number, "") if status_kind is not None else ""
             ticket_normalized = format_ticket(store.helpdesk_ticket)
             effective_ip = (store.ip or "").strip() or get_ip_for_store(store.number) or "—"
-            entries.append((number, effective_ip, st, lc, store.isp, ticket_normalized, online))
+            entries.append((number, effective_ip, st, lc, store.isp, ticket_normalized, status_kind))
 
         # Sorting
         col, order = self.sort_state["column"], self.sort_state["order"]
@@ -276,19 +283,25 @@ class AppUI:
             idx = idx_map[col]
             reverse = (order == "desc")
             if col == "status":
-                # status sorts by online flag (entries[-1])
-                entries.sort(key=lambda x: not x[-1], reverse=reverse)
+                # Three-way: Online (0), Pinging (1), Offline (2)
+                def status_sort_key(x: tuple) -> int:
+                    sk = x[-1]
+                    if sk is True:
+                        return 0
+                    if sk is None:
+                        return 1
+                    return 2
+                entries.sort(key=status_sort_key, reverse=reverse)
             else:
                 entries.sort(key=lambda x: x[idx], reverse=reverse)
 
         # Repaint
         self.tree.delete(*self.tree.get_children())
-        for (number, ip, st, lc, isp, ticket, online) in entries:
-            # Determine color:
-            #   red = offline (0/4)
-            #   orange = degraded (1-3/4)
-            #   green = healthy (4/4)
-            if not online:
+        for (number, ip, st, lc, isp, ticket, status_kind) in entries:
+            # Determine color: gray = pinging, red = offline, green/orange = online
+            if status_kind is None:
+                color = "gray"
+            elif status_kind is False:
                 color = "red"
             else:
                 sc = self._last_probe_success.get(number, 4)

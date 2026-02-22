@@ -92,9 +92,7 @@ class Repo:
         with self._lock:
             prev = self._status.get(number)
             self._status[number] = online
-            if prev is None and online:
-                self._last_change[number] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            elif prev is not None and prev != online:
+            if prev is not None and prev != online:
                 self._last_change[number] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # -------- Snapshots for safe reading --------
